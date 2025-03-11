@@ -1,210 +1,103 @@
-// #include <stdio.h>
-// #include <unistd.h>
-// #include <stdlib.h>
-// #include <string.h>
-// #include <netinet/in.h>
-// #include <sys/select.h>
-
-// #define WRONG	"Wrong number of arguments\n"
-// #define FATAL	"Fatal error\n"
-// #define ARRIVED	"server: client %d just arrived\n"
-// #define LEFT	"server: client %d just left\n"
-// #define CLTMSG	"client %d: %s"
-
-// static int			server, client, last, id, clients[16 * 4096];
-// char				str[97 * 4096], buff[96 * 4096];
-// fd_set				requests, readtime, sendtime;
-// struct sockaddr_in	servaddr, cli;
-// socklen_t			len = sizeof(cli);
-// ssize_t				r;
-
-// void exiterror(const char *msg)
-// {
-// 	if (server > 2) close(server);
-// 	write(2, msg, strlen(msg));
-// 	exit(1);
-// }
-
-// void sendresponses(const int ownfd)
-// {
-// 	for (int fd = 2; fd <= last; ++fd)
-// 	{
-// 		if (fd != ownfd && FD_ISSET(fd, &sendtime))
-// 			if (send(fd, str, strlen(str), 0) < 0) exiterror(FATAL);
-// 	}
-// 	bzero(&str, sizeof(str));
-// }
-
-// int main(int ac, char **av)
-// {
-// 	if (ac != 2) exiterror(WRONG);
-
-// 	bzero(&servaddr, sizeof(servaddr));
-// 	servaddr.sin_family = AF_INET;
-// 	servaddr.sin_addr.s_addr = htonl(2130706433);
-// 	servaddr.sin_port = htons(atoi(av[1]));
-
-// 	server = socket(AF_INET, SOCK_STREAM, 0);
-// 	if (server < 0) exiterror(FATAL);
-// 	if ((bind(server, (const struct sockaddr *)&servaddr, sizeof(servaddr))) != 0) exiterror(FATAL);
-// 	if (listen(server, 10) != 0) exiterror(FATAL);
-
-// 	FD_ZERO(&requests);
-// 	FD_SET(server, &requests);
-// 	last = server;
-
-// 	while (1)
-// 	{
-// 		readtime = sendtime = requests;
-// 		if (select(last + 1, &readtime, &sendtime, 0, 0) < 0) continue;
-
-// 		if (FD_ISSET(server, &readtime))
-// 		{
-// 			client = accept(server, (struct sockaddr *)&cli, &len);
-// 			if (client < 0) exiterror(FATAL);
-
-// 			sprintf(str, ARRIVED, id);
-// 			clients[client] = id++;
-// 			FD_SET(client, &requests);
-// 			sendresponses(client);
-// 			last = last > client ? last : client;
-// 			continue;
-// 		}
-
-// 		for (int fd = 2; fd <= last; ++fd)
-// 		{
-// 			if (FD_ISSET(fd, &readtime))
-// 			{
-// 				bzero(&buff, sizeof(buff));
-// 				r = 1;
-// 				while (r == 1 && buff[strlen(buff) - 1] != '\n') r = recv(fd, buff + strlen(buff), 1, 0);
-// 				if (r <= 0)
-// 				{
-// 					sprintf(str, LEFT, clients[fd]);
-// 					FD_CLR(fd, &requests);
-// 					close(fd);
-// 				}
-// 				else
-// 				{
-// 					sprintf(str, CLTMSG, clients[fd], buff);
-// 				}
-// 				sendresponses(fd);
-// 			}
-// 		}
-// 	}
-// }
-
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
+#include <errno.h>
 #include <string.h>
+#include <unistd.h>
+#include <netdb.h>
+#include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/select.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-#define WRONG   "Wrong number of arguments\n"
-#define FATAL   "Fatal error\n"
-#define ARRIVED "server: client %d just arrived\n"
-#define LEFT    "server: client %d just left\n"
-#define CLTMSG  "client %d: %s"
-
-static int            server, client, last, id, clients[16 * 4096];
-char                str[97 * 4096], buff[96 * 4096];
-fd_set              requests, readtime, sendtime;
-struct sockaddr_in  servaddr, cli;
-socklen_t           len = sizeof(cli);
-ssize_t             r;
-
-void exiterror(const char *msg)
+typedef struct s_client
 {
-    if (server > 2) close(server);
-    write(2, msg, strlen(msg));
-    exit(1);
+	int id;
+	char msg[500000 - 20];
+} t_client;
+
+t_client clients[2048];
+fd_set readfds, writefds, activefds;
+char buffread[500000], buffwrite[500000];
+int max = 0, nextid = 0;
+
+void err(char *str)
+{
+	write(2, str, strlen(str));
+	exit(1);
 }
 
-void sendresponses(const int ownfd)
+void sendMSG(int sendfd)
 {
-    // Envia a mensagem para todos os outros clientes, exceto o próprio
-    for (int fd = 2; fd <= last; ++fd)
+	for (int fd = 0; fd <= max; fd++)
     {
-        if (fd != ownfd && FD_ISSET(fd, &sendtime))
-        {
-            // Enviar a mensagem para os clientes
-            if (send(fd, str, strlen(str), 0) < 0)
-                exiterror(FATAL);
-        }
-    }
-    bzero(&str, sizeof(str));  // Limpar o buffer após enviar as mensagens
+		if (FD_ISSET(fd, &writefds) && fd != sendfd)
+			write(fd, buffwrite, strlen(buffwrite));
+	}
 }
 
 int main(int ac, char **av)
 {
-    if (ac != 2) exiterror(WRONG);
+	if (ac != 2)
+		err("Wrong number of arguments\n");
+	int sockfd = max = socket(AF_INET, SOCK_STREAM, 0);
+	if (sockfd == -1)
+		err("Fatal error\n");
+	FD_ZERO(&activefds); // initialize fd_set and put sockfd on fd_set
+	FD_SET(sockfd, &activefds);
 
-    bzero(&servaddr, sizeof(servaddr));
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = htonl(2130706433);  // 127.0.0.1
-    servaddr.sin_port = htons(atoi(av[1]));
+	struct sockaddr_in servaddr;
+	servaddr.sin_family = AF_INET; 
+	servaddr.sin_addr.s_addr = htonl(2130706433); //127.0.0.1
+	servaddr.sin_port = htons(atoi(av[1]));
+	if ((bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr))) != 0)
+		err("Fatal error\n");
+	if (listen(sockfd, 10) != 0)
+		err("Fatal error\n");
 
-    server = socket(AF_INET, SOCK_STREAM, 0);
-    if (server < 0) exiterror(FATAL);
-    if ((bind(server, (const struct sockaddr *)&servaddr, sizeof(servaddr))) != 0) exiterror(FATAL);
-    if (listen(server, 10) != 0) exiterror(FATAL);
-
-    FD_ZERO(&requests);
-    FD_SET(server, &requests);
-    last = server;
-
-    while (1)
+	while (1)
     {
-        readtime = sendtime = requests;
-        if (select(last + 1, &readtime, &sendtime, 0, 0) < 0) continue;
+		readfds = writefds = activefds;
+		if (select(max + 1, &readfds, &writefds, 0, 0) < 0) continue;
 
-        // Verificar se um novo cliente está tentando conectar
-        if (FD_ISSET(server, &readtime))
+		for (int fd = 0; fd <= max; fd++)
         {
-            client = accept(server, (struct sockaddr *)&cli, &len);
-            if (client < 0) exiterror(FATAL);
-
-            // Atribuir um ID único ao cliente
-            sprintf(str, ARRIVED, id);
-            clients[client] = id++;
-
-            // Enviar a mensagem de "chegada" para todos os outros clientes
-            sendresponses(client);  // Envia a mensagem "client X just arrived" para os outros
-
-            // Enviar a mensagem "client X just arrived" para o cliente recém-conectado
-            if (send(client, str, strlen(str), 0) < 0) exiterror(FATAL);
-
-            // Adicionar o novo cliente à lista de clientes
-            FD_SET(client, &requests);
-
-            // Atualizar o último descritor de arquivo
-            last = last > client ? last : client;
-            continue;
-        }
-
-        // Para os clientes que já estão conectados
-        for (int fd = 2; fd <= last; ++fd)
-        {
-            if (FD_ISSET(fd, &readtime))
+			if (!FD_ISSET(fd, &readfds)) continue;
+			if (fd == sockfd)
+            { // client arrived - accept new connection and put clientsock on fd_set
+				int clientsock = accept(fd, 0, 0);
+				max = (clientsock > max) ? clientsock : max;
+				clients[clientsock].id = nextid++;
+				bzero(clients[clientsock].msg, strlen(clients[clientsock].msg));
+				FD_SET(clientsock, &activefds);
+				sprintf(buffwrite, "server: client %d just arrived\n", clients[clientsock].id);
+				sendMSG(clientsock);
+			}
+            else
             {
-                bzero(&buff, sizeof(buff));
-                r = 1;
-                // Ler dados do cliente até encontrar o caractere de nova linha
-                while (r == 1 && buff[strlen(buff) - 1] != '\n') r = recv(fd, buff + strlen(buff), 1, 0);
-                if (r <= 0)
-                {
-                    sprintf(str, LEFT, clients[fd]);
-                    FD_CLR(fd, &requests);
-                    close(fd);
-                }
+				int read = recv(fd, buffread, sizeof(buffread), 0);
+				if (read <= 0)
+                { // client left - clear and close fd
+					sprintf(buffwrite, "server: client %d just left\n", clients[fd].id);
+					sendMSG(fd);
+					FD_CLR(fd, &activefds);
+					close(fd);
+				}
                 else
-                {
-                    sprintf(str, CLTMSG, clients[fd], buff);
-                }
-                // Enviar a mensagem para todos os outros clientes
-                sendresponses(fd);  // Aqui enviamos as mensagens de um cliente para os outros
-            }
-        }
-    }
+                { // client message - handle client message
+					for (int i = 0, j = strlen(clients[fd].msg); i < read; i++, j++)
+                    {
+						clients[fd].msg[j] = buffread[i];
+						if (clients[fd].msg[j] == '\n')
+                        {
+							clients[fd].msg[j] = 0;
+							sprintf(buffwrite, "client %d: %s\n", clients[fd].id, clients[fd].msg);
+							sendMSG(fd);
+							bzero(clients[fd].msg, strlen(clients[fd].msg));
+							j = -1;
+						}
+					}
+				}
+			}
+			break;
+		}
+	}
 }
