@@ -59,10 +59,10 @@ int main(int ac, char **av)
 		if (select(max + 1, &readfds, &writefds, 0, 0) < 0) continue;
 
 		for (int fd = 0; fd <= max; fd++)
-        {
+        	{
 			if (!FD_ISSET(fd, &readfds)) continue;
 			if (fd == sockfd)
-            { // client arrived - accept new connection and put clientsock on fd_set
+            		{ // client arrived - accept new connection and put clientsock on fd_set
 				int clientsock = accept(fd, 0, 0);
 				max = (clientsock > max) ? clientsock : max;
 				clients[clientsock].id = nextid++;
@@ -71,23 +71,23 @@ int main(int ac, char **av)
 				sprintf(buffwrite, "server: client %d just arrived\n", clients[clientsock].id);
 				sendMSG(clientsock);
 			}
-            else
-            {
+            		else
+            		{
 				int read = recv(fd, buffread, sizeof(buffread), 0);
 				if (read <= 0)
-                { // client left - clear and close fd
+                		{ // client left - clear and close fd
 					sprintf(buffwrite, "server: client %d just left\n", clients[fd].id);
 					sendMSG(fd);
 					FD_CLR(fd, &activefds);
 					close(fd);
 				}
-                else
-                { // client message - handle client message
+                		else
+                		{ // client message - handle client message
 					for (int i = 0, j = strlen(clients[fd].msg); i < read; i++, j++)
-                    {
+                    			{
 						clients[fd].msg[j] = buffread[i];
 						if (clients[fd].msg[j] == '\n')
-                        {
+                        			{
 							clients[fd].msg[j] = 0;
 							sprintf(buffwrite, "client %d: %s\n", clients[fd].id, clients[fd].msg);
 							sendMSG(fd);
